@@ -7,6 +7,13 @@
 #![no_std]
 #![no_main]
 
+mod qmi8658c;
+
+use core::fmt::Write as fmt_write;
+use heapless::String;
+
+use eg_seven_segment::SevenSegmentStyleBuilder;
+
 use rp_pico as bsp;
 
 use bsp::entry;
@@ -15,9 +22,11 @@ use fugit::RateExtU32;
 use display_interface_spi::SPIInterface;
 use embedded_graphics::prelude::*;
 use embedded_graphics::{
+    mono_font::{ascii::FONT_6X10, MonoTextStyle},
     image::Image, 
     pixelcolor::Rgb565,
     primitives::{Circle, PrimitiveStyleBuilder, Rectangle, Triangle},
+    text::{Alignment, Text},
 };
 use tinybmp::Bmp;
 
@@ -26,8 +35,21 @@ use bsp::hal::{
     gpio, pac, pwm,
     sio::Sio,
     spi,
+    I2C,
+    usb,
     watchdog::Watchdog,
 };
+
+// USB Device support
+use usb_device::{class_prelude::*, prelude::*};
+
+// USB Communications Class Device support
+use usbd_serial::SerialPort;
+
+use crate::qmi8658c::QMI8658C;
+
+// I2C HAL traits & Types.
+use embedded_hal::blocking::i2c::{Operation, Read, Transactional, Write};
 
 #[entry]
 fn main() -> ! {
@@ -103,6 +125,21 @@ fn main() -> ! {
     // Clear the screen
     display.clear(Rgb565::BLACK).unwrap();
 
+    let sda_pin = pins.gpio6.into_mode::<gpio::FunctionI2C>();
+    let scl_pin = pins.gpio7.into_mode::<gpio::FunctionI2C>();
+
+    let i2c = I2C::i2c1(
+        pac.I2C1,
+        sda_pin,
+        scl_pin,
+        400.kHz(),
+        &mut pac.RESETS,
+        &clocks.system_clock,
+    );
+
+    let mut qmi8658c = QMI8658C::new(i2c);
+    qmi8658c.init().unwrap();
+
     let style = PrimitiveStyleBuilder::new()
         .stroke_width(2)
         .stroke_color(Rgb565::CSS_RED)
@@ -124,14 +161,89 @@ fn main() -> ! {
     let im: Image<Bmp<Rgb565>> = Image::new(&bmp, Point::new(56, 56));
 
     im.draw(&mut display).unwrap();
+    
+    // Create a Text object and draw it to the display
+    let text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
+    let text_bounds = Rectangle::new(Point::zero(), display.bounding_box().size);
+    let text = "Hello, World!";
+    let text_position = Point::new(50, 200);
+    Text::new(text, text_position, text_style).draw(&mut display).unwrap();
+    
+    // Set up the USB driver
+    let usb_bus = UsbBusAllocator::new(usb::UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+
+    // Set up the USB Communications Class Device driver
+    let mut serial = SerialPort::new(&usb_bus);
+
+    // Create a USB device with a fake VID and PID
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
+        .manufacturer("Kouvosto Telecom")
+        .product("RP-128")
+        .serial_number("001")
+        .device_class(2) // from: https://www.usb.org/defined-class-codes
+        .build();
+    
+    // Define a new style.
+    let seg_style = SevenSegmentStyleBuilder::new()
+        .digit_size(Size::new(30, 50)) // digits are 10x20 pixels
+        .digit_spacing(5)              // 5px spacing between digits
+        .segment_width(5)              // 5px wide segments
+        .segment_color(Rgb565::GREEN)  // active segments are green
+        .build();
+
+
+    Text::new("12:34", Point::new(30, 120), seg_style).draw(&mut display).unwrap();
+
+    let mut i: i32 = 0;
+    
+    delay.delay_ms(1000);
+
+    loop {
+
+        display.clear(Rgb565::BLACK).unwrap();
+
+        //let accel_gyro_data = qmi8658c.read_accel_gyro().unwrap();
+        //println!("Accel: ({}, {}, {})", accel_gyro_data.accel_x, accel_gyro_data.accel_y, accel_gyro_data.accel_z);
+        //println!("Gyro: ({}, {}, {})", accel_gyro_data.gyro_x, accel_gyro_data.gyro_y, accel_gyro_data.gyro_z);
+
+        let mut data = String::<32>::new(); // 32 byte string buffer
+        
+        // `write` for `heapless::String` returns an error if the buffer is full,
+        // but because the buffer here is 32 bytes large, the u32 will fit with a 
+        // lot of space left. You can shorten the buffer if needed to save space.
+        let _ = write!(data, "step:{i}");
+
+        // Use the style to draw text to a embedded-graphics `DrawTarget`.
+        
+        let _ = serial.write(b"Hello World");
+        Text::new(&data, text_position, text_style).draw(&mut display).unwrap();
+
+        Circle::new(Point::new(i, i), 100)
+            .into_styled(style)
+            .draw(&mut display)
+            .unwrap();
+
+        if i >= 120{
+            i -= 1;
+        }
+        else {
+            i += 1;
+        }
+    
+        delay.delay_ms(10);
+    }
 
     exit()
 }
 
 pub fn exit() -> ! {
-    loop {
-        cortex_m::asm::bkpt();
-    }
+    loop {}
 }
 
 #[panic_handler]

@@ -42,7 +42,7 @@ impl Format for AccelGyroData {
     }
 }
 */
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AccelGyroData {
     pub accel_x: i16,
     pub accel_y: i16,

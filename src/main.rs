@@ -7,9 +7,16 @@
 #![no_std]
 #![no_main]
 
+use defmt_rtt as _; // global logger
+
+// TODO(5) adjust HAL import
+// use some_hal as _; // memory layout 
+
+use panic_probe as _;
+
 mod qmi8658c;
 
-use core::fmt::Write as fmt_write;
+//use core::fmt::Write as fmt_write;
 use heapless::String;
 
 use eg_seven_segment::SevenSegmentStyleBuilder;
@@ -93,7 +100,7 @@ fn main() -> ! {
     let spi = spi.init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
-        8_000_000u32.Hz(),
+        62_500_000u32.Hz(),
         &embedded_hal::spi::MODE_0,
     );
 
@@ -206,23 +213,25 @@ fn main() -> ! {
 
     loop {
 
+        defmt::println!("Hello World!");
+
         display.clear(Rgb565::BLACK).unwrap();
 
-        //let accel_gyro_data = qmi8658c.read_accel_gyro().unwrap();
+        let accel_gyro_data = qmi8658c.read_accel_gyro().unwrap_or_default();
         //println!("Accel: ({}, {}, {})", accel_gyro_data.accel_x, accel_gyro_data.accel_y, accel_gyro_data.accel_z);
         //println!("Gyro: ({}, {}, {})", accel_gyro_data.gyro_x, accel_gyro_data.gyro_y, accel_gyro_data.gyro_z);
 
-        let mut data = String::<32>::new(); // 32 byte string buffer
+        //let mut data = String::<32>::new(); // 32 byte string buffer
         
         // `write` for `heapless::String` returns an error if the buffer is full,
         // but because the buffer here is 32 bytes large, the u32 will fit with a 
         // lot of space left. You can shorten the buffer if needed to save space.
-        let _ = write!(data, "step:{i}");
+        //let _ = write!(data, "step:{i}");
 
         // Use the style to draw text to a embedded-graphics `DrawTarget`.
         
         let _ = serial.write(b"Hello World");
-        Text::new(&data, text_position, text_style).draw(&mut display).unwrap();
+        //Text::new(&data, text_position, text_style).draw(&mut display).unwrap();
 
         Circle::new(Point::new(i, i), 100)
             .into_styled(style)
@@ -238,15 +247,15 @@ fn main() -> ! {
     
         delay.delay_ms(10);
     }
-
-    exit()
 }
 
 pub fn exit() -> ! {
     loop {}
 }
 
-#[panic_handler]
-fn my_panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {}
+// same panicking *behavior* as `panic-probe` but doesn't print a panic message
+// this prevents the panic message being printed *twice* when `defmt::panic` is invoked
+#[defmt::panic_handler]
+fn panic() -> ! {
+    cortex_m::asm::udf()
 }
